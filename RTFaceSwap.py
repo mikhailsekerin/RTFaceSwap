@@ -1,35 +1,133 @@
 import sys
 import numpy as np
 import cv2
-import dlib
 import time
+import os
+import urllib.request
+from pathlib import Path
 
-predictor_path = "shape_predictor_68_face_landmarks.dat"
-detector = dlib.get_frontal_face_detector()
-predictor = dlib.shape_predictor(predictor_path)
+# MediaPipe imports
+from mediapipe.tasks.python import BaseOptions
+from mediapipe.tasks.python.vision import (
+    FaceLandmarker,
+    FaceLandmarkerOptions,
+    RunningMode
+)
+import mediapipe as mp
+
+MODEL_URL = "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task"
+MODEL_PATH = "models/face_landmarker.task"
+
+def ensure_model_downloaded():
+    """Download MediaPipe model if not present"""
+    if os.path.exists(MODEL_PATH):
+        return MODEL_PATH
+
+    print("Downloading MediaPipe face_landmarker model (~5.7MB)...")
+    os.makedirs("models", exist_ok=True)
+
+    try:
+        urllib.request.urlretrieve(MODEL_URL, MODEL_PATH)
+        print(f"Model downloaded to {MODEL_PATH}")
+        return MODEL_PATH
+    except Exception as e:
+        print(f"Error downloading model: {e}")
+        print(f"Download manually from: {MODEL_URL}")
+        sys.exit(1)
+
+# Download model and initialize MediaPipe
+model_path = ensure_model_downloaded()
+base_options = BaseOptions(model_asset_path=model_path)
+options = FaceLandmarkerOptions(
+    base_options=base_options,
+    running_mode=RunningMode.VIDEO,
+    num_faces=2,
+    min_face_detection_confidence=0.5,
+    min_face_presence_confidence=0.5,
+    min_tracking_confidence=0.5
+)
+face_landmarker = FaceLandmarker.create_from_options(options)
 
 # Performance optimization settings
-PROCESS_SCALE = 0.5  # Scale down frame for processing (0.5 = 50% size)
-FACE_DETECT_INTERVAL = 3  # Only detect faces every N frames
-ENABLE_FPS_COUNTER = True  # Show FPS on screen
+FACE_DETECT_INTERVAL = 1      # Detect every frame (MediaPipe is fast enough)
+PROCESS_SCALE = 1.0            # Full resolution (no need to downscale)
+ENABLE_FPS_COUNTER = True      # Show FPS on screen
 
-def get_all_landmarks(im, scale=1.0):
-    """Detect all faces in the image and return their landmarks"""
-    # Downscale for faster detection if scale < 1.0
-    if scale < 1.0:
-        small = cv2.resize(im, (int(im.shape[1] * scale), int(im.shape[0] * scale)))
-        rects = detector(small, 0)
-    else:
-        rects = detector(im, 0)
-        small = im
+# MediaPipe landmark indices for face swapping (~150 key points)
+MEDIAPIPE_FACE_SWAP_INDICES = [
+    # Face oval
+    10, 338, 297, 332, 284, 251, 389, 356, 454, 323, 361, 288,
+    397, 365, 379, 378, 400, 377, 152, 148, 176, 149, 150, 136,
+    172, 58, 132, 93, 234, 127, 162, 21, 54, 103, 67, 109,
+    # Left eye
+    33, 7, 163, 144, 145, 153, 154, 155, 133, 173, 157, 158, 159, 160, 161, 246,
+    # Right eye
+    362, 382, 381, 380, 374, 373, 390, 249, 263, 466, 388, 387, 386, 385, 384, 398,
+    # Lips outer and inner
+    61, 146, 91, 181, 84, 17, 314, 405, 321, 375, 291, 308, 324, 318, 402, 317,
+    14, 87, 178, 88, 95, 78, 191, 80, 81, 82, 13, 312, 311, 310, 415, 308,
+    # Nose
+    1, 2, 98, 327, 4, 5, 6, 168, 197, 195,
+    # Eyebrows
+    70, 63, 105, 66, 107, 55, 65, 52, 53, 46,
+    300, 293, 334, 296, 336, 285, 295, 282, 283, 276
+]
+
+class FaceSwapCache:
+    """Cache for expensive computations (triangulation and convex hull)"""
+    def __init__(self, max_size=100):
+        self.triangulation_cache = {}
+        self.hull_cache = {}
+        self.max_size = max_size
+
+    def _make_key(self, points):
+        """Create hashable key from points"""
+        return tuple(tuple(p) for p in points[:10])  # Use first 10 points as key
+
+    def get_hull(self, points):
+        """Get cached convex hull or compute"""
+        key = self._make_key(points)
+        if key not in self.hull_cache:
+            hull_index = cv2.convexHull(np.array(points, dtype=np.float32), returnPoints=False)
+            self.hull_cache[key] = hull_index
+            if len(self.hull_cache) > self.max_size:
+                self.hull_cache.pop(next(iter(self.hull_cache)))
+        return self.hull_cache[key]
+
+    def get_triangulation(self, points, rect):
+        """Get cached triangulation or compute"""
+        key = self._make_key(points)
+        if key not in self.triangulation_cache:
+            dt = calculateDelaunayTriangles(rect, points)
+            self.triangulation_cache[key] = dt
+            if len(self.triangulation_cache) > self.max_size:
+                self.triangulation_cache.pop(next(iter(self.triangulation_cache)))
+        return self.triangulation_cache[key]
+
+def get_all_landmarks(im, timestamp_ms):
+    """Detect faces using MediaPipe and return landmarks subset"""
+    # Convert BGR to RGB for MediaPipe
+    rgb_frame = cv2.cvtColor(im, cv2.COLOR_BGR2RGB)
+    mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb_frame)
+
+    # Detect with timestamp for VIDEO mode
+    detection_result = face_landmarker.detect_for_video(mp_image, timestamp_ms)
 
     all_landmarks = []
-    for rect in rects:
-        points = []
-        for p in predictor(small, rect).parts():
-            # Scale points back to original size and convert to proper type
-            points.append((float(p.x / scale), float(p.y / scale)))
-        all_landmarks.append(points)
+    if detection_result.face_landmarks:
+        h, w = im.shape[:2]
+        for face_landmarks in detection_result.face_landmarks:
+            # Extract subset of landmarks and convert to pixels
+            points = []
+            for idx in MEDIAPIPE_FACE_SWAP_INDICES:
+                if idx < len(face_landmarks):
+                    lm = face_landmarks[idx]
+                    x = float(lm.x * w)
+                    y = float(lm.y * h)
+                    points.append((x, y))
+
+            if len(points) > 0:
+                all_landmarks.append(points)
 
     return all_landmarks
 
@@ -135,11 +233,16 @@ def warpTriangle(img1, img2, t1, t2):
 
     img2[r2[1]:r2[1] + r2[3], r2[0]:r2[0] + r2[2]] = img2[r2[1]:r2[1] + r2[3], r2[0]:r2[0] + r2[2]] + img2Rect
 
-def swap(img1, img2, points1, points2):
+def swap(img1, img2, points1, points2, cache=None):
     img1Warped = np.copy(img2)
     hull1 = []
     hull2 = []
-    hullIndex = cv2.convexHull(np.array(points2, dtype=np.float32), returnPoints=False)
+
+    # Use cached hull if available
+    if cache:
+        hullIndex = cache.get_hull(points2)
+    else:
+        hullIndex = cv2.convexHull(np.array(points2, dtype=np.float32), returnPoints=False)
 
     for i in range(0, len(hullIndex)):
         hull1.append(points1[int(hullIndex[i][0])])
@@ -147,10 +250,15 @@ def swap(img1, img2, points1, points2):
 
     sizeImg2 = img2.shape
     rect = (0, 0, sizeImg2[1], sizeImg2[0])
-    dt = calculateDelaunayTriangles(rect, hull2)
+
+    # Use cached triangulation if available
+    if cache:
+        dt = cache.get_triangulation(hull2, rect)
+    else:
+        dt = calculateDelaunayTriangles(rect, hull2)
 
     if len(dt) == 0:
-        quit()
+        return img2
 
     for i in range(0, len(dt)):
         t1 = []
@@ -221,11 +329,15 @@ frame_count = 0
 fps_start_time = time.time()
 fps = 0
 
+# Initialize cache and timestamp
+cache = FaceSwapCache()
+timestamp_ms = 0
+
 # Cached landmarks for frame skipping
 cached_landmarks = []  # List of all detected face landmarks
 
 print("Camera ready! Press 1 to enable face swap, 2 for normal view, q to quit")
-print(f"Performance settings: Scale={PROCESS_SCALE}, Detect interval={FACE_DETECT_INTERVAL}")
+print(f"Performance settings: MediaPipe, Detect interval={FACE_DETECT_INTERVAL}")
 
 while(True):
     ret, frame = cap.read()
@@ -267,7 +379,10 @@ while(True):
 
         # Detect all faces in the full frame every N frames
         if frame_count % FACE_DETECT_INTERVAL == 0:
-            cached_landmarks = get_all_landmarks(frame, PROCESS_SCALE)
+            cached_landmarks = get_all_landmarks(frame, timestamp_ms)
+
+        # Increment timestamp for MediaPipe VIDEO mode
+        timestamp_ms += int(1000 / 30)  # Increment by ~33ms per frame (30 FPS)
 
         # Use cached landmarks
         landmarks = cached_landmarks
@@ -281,9 +396,9 @@ while(True):
             frame_copy = frame.copy()
 
             # Create intermediate result with face1 swapped
-            temp = swap(frame_copy, frame.copy(), points1, points2)
+            temp = swap(frame_copy, frame.copy(), points1, points2, cache)
             # Now swap face2 onto the result (use original frame as source)
-            output = swap(frame_copy, temp, points2, points1)
+            output = swap(frame_copy, temp, points2, points1, cache)
 
             if ENABLE_FPS_COUNTER:
                 cv2.putText(output, f"FPS: {fps:.1f} | 2 faces detected", (10, 30),
