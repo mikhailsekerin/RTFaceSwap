@@ -1,0 +1,4 @@
+numpy>=2.4.0
+opencv-python>=4.13.0
+opencv-contrib-python>=4.13.0
+dlib>=20.0.1
