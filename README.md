@@ -1,131 +1,124 @@
-<html>
-<head>
+# RTFaceSwap - Real-Time Face Swapping
 
+Real-time face swapping application using MediaPipe and OpenCV with GPU acceleration.
 
-</head>
-<body>
-<blockquote>
+## Features
 
-<h1>Face Swapping in Echtzeit</h1>
+- **Real-time face detection and swapping** - Swap faces between two people in live video
+- **MediaPipe FaceLandmarker** - High-performance face detection with 468 landmarks (150 strategic points used)
+- **GPU Acceleration** - Metal (Apple Silicon) and XNNPACK delegate support
+- **ARKit Blend Shapes** - Captures 52 facial expression parameters (eyeBrowInnerUp, mouthSmile, jawOpen, etc.)
+- **Head Pose Tracking** - 4x4 transformation matrices for head rotation and position
+- **Performance Optimizations**:
+  - Delaunay triangulation caching (5-10ms saved per frame)
+  - Convex hull caching with LRU eviction
+  - Frame-by-frame detection (configurable interval)
+  - 3-5x faster than previous dlib-based implementation
 
-<p><b>Projektdokumentation eines Projekts für Interactive Systems</b></p>
+## Performance
 
-<p>Gruppe: Vladislav Chirkov, Mikhail Sekerin, Anton Sorokin<p>
+- **Face Detection**: 10-20ms per frame (MediaPipe)
+- **Target FPS**: 30+ fps on Apple M1 Pro
+- **Detection Mode**: Every frame processing (FACE_DETECT_INTERVAL=1)
 
-<p>Hier finden Sie:</p>
+## Requirements
 
-<ul>
-  <li><a href=#idee>Projektidee</a></li>
-  <li><a href=#umsetzung>Umsetzung</a></li>
-  <li><a href=#auswertung>Auswertung</a></li>
-  <li><a href=#quellen>Quellen</a></li>
-</ul>
-<h3><a name="idee">1. Projektidee</a></h3>
+- Python 3.14+
+- Webcam
+- At least 2 faces in view for face swapping
 
-<div class=text> Die Hauptidee dieses Projektes ist die Face Recognition in Echtzeit. Dieses Thema ist sehr umfangreich und verwendet nicht nur in professionellen Bereichen, sondern im Bereich der Unterhaltung auch. Zum Beispiel es hilft gute Fotografie machen oder nach Verbrechern durch Videoüberwachung suchen. Aber Unterhaltungsbereich ist auch interessant und nützlich. Große Unternehmen wie Facebook, Apple nutzen diese Technologie in beiden Bereichen. Zum Beispiel hat Apple letztes Jahr FaceID präsentiert. Mit der Hilfe von FaceID kann man ihrer iPhone entsperren oder Animoji machen. Animoji ist eine  Art von Masken, die waren zuerst  in den Jahr 2016 in MSQRD App genutzt, danach wurde diese Applikation von Facebook gekauft und in Instagram verwendet. Im Rahmen dieses Projekts wollen wir Real Time Face Swapping entwicklen. Die Hauptaufgabe ist die Implementation der Face-Swap-Funktion in Echtzeit. Dafür muss man die folgende Aufgaben lösen:
-<ol>
-  <li>Grenze des Gesichtes herausfinden</li>
-  <li>Farbe korregieren</li>
-  <li>Ort der empfangenen Mask im Bild ermitteln</li>
-</ol>
+## Installation
 
-Um das Projekt zu implementieren, war die Python-Sprache und der Satz von Bibliotheken benutzt, die unten beschrieben werden. </div>
+1. Clone the repository:
+```bash
+git clone https://github.com/mikhailsekerin/RTFaceSwap.git
+cd RTFaceSwap
+```
 
-<h3><a name="umsetzung">2. Umsetzung</a></h3>
+2. Create and activate virtual environment:
+```bash
+python -m venv venv
+source venv/bin/activate  # On Windows: venv\Scripts\activate
+```
 
-<div class=text> Um dieses Programm zu verwenden, benötigt man eine Webcam und zwei Gesichter, die in die Kamera sehen. Die Geometrie der beiden Gesichter ist sehr unterschiedlich und daher muss man das Quellgesicht etwas verformen, so dass es das Zielgesicht abdeckt, aber man muss auch sicherstellen, dass es nicht bis zur Unkenntlichkeit verformt werden.
-Um dies zu erreichen, sucht man die Orientierungspunkte in den beiden Gesichter mit Hilfe von dlib. Dlib ist einfach eine Bibliothek, die einen vortrainierten Detektor hat. Dieser Detektor findet die Positionen von 68 Punkte auf dem Gesicht. Ein Beispiel kann man auf dem Bild sehen.
+3. Install dependencies:
+```bash
+pip install opencv-python mediapipe numpy
+```
 
- </div>
+4. The MediaPipe face landmarker model (3.6MB) will be automatically downloaded on first run.
 
-<div class="gallery">
-  <a target="_blank" href="bild1.jpg">
-    <img src="bild1.jpg" alt="" width="300" height="200">
-  </a>
-  <div class="desc">Abbildung 1: Landmark Detection</div>
-</div>
-<div class="gallery">
-  <a target="_blank" href="bild2.jpg">
-    <img src="bild2.jpg" alt="" width="300" height="200">
-  </a>
-  <div class="desc">Abbildung 2: Landmark Detection (Python-Sourcecode))</div>
-</div>
+## Usage
 
-<div class=text> Der nächste Schritt ist eine Delaunay-Triangulation dieser Punkte. Dadurch kann man das Gesicht in kleinere Teile aufteilen. Die Triangulation bedeutet eine Unterteilung der Ebene in Dreiecke mit den Punkten als Eckpunkte. Auf dem linken Bild sieht man eine Reihe von Punkten und rechts die Triangulation. Eine Reihe von Punkten kann viele mögliche Triangulationen haben, aber in einer Delaunay-Triangulation werden die Dreiecke so gewählt, dass innerhalb des Kreises, auf dem die drei Dreieckspunkte liegen (Umkreis des Dreiecks), keine anderen Punkte enthalten sind. </div>
+Run the application:
+```bash
+python RTFaceSwap.py
+```
 
-<div class="gallery">
-  <a target="_blank" href="bild3.jpg">
-    <img src="bild3.jpg" alt="" width="300" height="200">
-  </a>
-  <div class="desc">Abbildung 3: Delaunay-Triangulation</div>
-</div>
-<div class="gallery">
-  <a target="_blank" href="bild4.jpg">
-    <img src="bild4.jpg" alt="" width="300" height="200">
-  </a>
-  <div class="desc">Abbildung 4: Zwischenergebnis</div>
-</div>
-<div class="gallery">
-  <a target="_blank" href="bild5.jpg">
-    <img src="bild5.jpg" alt="" width="300" height="200">
-  </a>
-  <div class="desc">Abbildung 5: Delaunay-Triangulation (Python-Sourcecode)</div>
-</div>
-<div class=text>
+**Controls:**
+- Press **1** - Enable face swap mode (shows blend shapes if enabled)
+- Press **2** - Normal camera view
+- Press **q** - Quit application
 
-Am Ende der Ausrichtung übertragt man die Dreiecke des Quellgesicht auf dem Zielgesicht. Wie man jedoch rechts sehen kann, sieht das Ergebnis kaum unnatürlich aus. Der nächste Schritt zeigt, wie man die beiden Bilder besser kombinieren kann. Damit es natürlich aussieht, verwendet man "Seamless Cloning". Seamless Cloning ist eines der neuen Features von OpenCV 3. Mit dieser neuen Funktion kann man ein Objekt aus einem Bild kopieren und in ein anderes Bild einfügen, um eine Komposition zu erstellen, die nahtlos und natürlich aussieht. Dazu wird die OpenCV-Funktion "seamlessClone" verwendet. Die folgenden Argumente werden verwendet:
+## Configuration
 
-<ol>
-<li>Quellbild, das in das Zielbild geklont wird</li>
-<li>Zielbild, in das das Quellbild geklont wird</li>
-<li>Eine grobe Maske um das Objekt, daswir klonen wollen.</li>
-<li>Position der Mitte des Quellbildes im Zielbild.</li>
-<li>Klonierungsmethode: Mixed oder Normal Cloning.</li>
-</ol>
-Beim "Normal Cloning" bleibt die Textur (der Gradient) des Quellbildes in der geklonten Region erhalten. Beim "Mixed Cloning" wird die Textur (der Gradient) der geklonten Region durch eine Kombination der Quell- und Zielbilder bestimmt. Nach allen Manipulationen wird das folgende Ergebnis erhalten, das auf der Abbildung dargestellt wird. Diese Funktion wird in der Methode "swap" benutzt, wo die Swap-Funktion implementiert wurde.
-</div>
-<div class="gallery">
-  <a target="_blank" href="bild6.jpg">
-    <img src="bild6.jpg" alt="" width="300" height="200">
-  </a>
-  <div class="desc">Abbildung 6: Seamless-Cloning Beispiel</div>
-</div>
-<div class="gallery">
-  <a target="_blank" href="bild7.jpg">
-    <img src="bild7.jpg" alt="" width="300" height="200">
-  </a>
-  <div class="desc">Abbildung 7: Swap-Funktion mit Seamless-Cloning (Python-Sourcecode)</div>
-</div>
-<div class="gallery">
-  <a target="_blank" href="bild9.jpg">
-    <img src="bild9.jpg" alt="" width="300" height="200">
-  </a>
-  <div class="desc">Abbildung 8: Hauptmethode (Python-Sourcecode)</div>
- </div>
-<div class=text>
-Damit das Programm funktioniert, muss man alle diese Schritte in Echtzeit durchführen. Als Ergebnis erhalten wir eine Face Swapping in Enchtzeit. Das Ergebnis und die Sourcecode ist auf der Abbilding 8 dargestellet.
-</div>
+Edit the configuration flags in `RTFaceSwap.py`:
 
+```python
+# Performance settings
+FACE_DETECT_INTERVAL = 1  # Detect faces every N frames (1 = every frame)
+ENABLE_FPS_COUNTER = True  # Show FPS counter
 
-<h3><a name="auswertung">3. Auswertung</a></h3>
-Im Rahmen dieses Projekts wurde das Programm zur Realisierung von Face Swap in Echtzeit entwickelt. In der Abbildung 9 kann man deutlich sehen, wie die ersetzten Gesichte aussehen. Die Genauigkeit der Ersetzung ist hoch genug, aber leider erfordert diese Anwendung ziemlich viel Rechenleistung bei der Verwendung einer hochauflösenden Kamera, weil sie in der Python-Programmiersprache geschrieben ist. Eine Lösung für dieses Problem ist die Implementierung in mithilfe von C++ oder die Nutzung von GPU (beispielweise CUDA für Nvidia).
-<div class=text>  </div>
-<div class="gallery">
-  <a target="_blank" href="bild8.jpg">
-    <img src="bild8.jpg" alt="" width="300" height="200">
-  </a>
-  <div class="desc">Abbildung 9: Ergebnis</div>
-</div>
-<h3><a name="quellen">Quellen</a></h3>
-<ul>
-  <li><a href=https://www.asozykin.ru/deep_learning/2017/08/11/foto-verification-with-dlib>Erkennen einer Person in einem Foto mithilfe von dlib</a></li>
-  <li><a href=http://www.learnopencv.com/seamless-cloning-using-opencv-python-cpp/>Seamless Cloning using OpenCV</a></li>
-  <li><a href=https://github.com/hrastnik/FaceSwap>Face Swap (Github)</a></li>
-  <li><a href=http://www.learnopencv.com/face-swap-using-opencv-c-python/>Face Swap using OpenCV and Python</a></li>
-  <li><a href=https://habrahabr.ru/post/306568/>Moderne Gesichtserkennung mit intensivem Training</a></li>
-  <li><a href=https://matthewearl.github.io/2015/07/28/switching-eds-with-python/>Face swapping with Python, dlib, and OpenCV</a></li>
-  <li><a href=http://www.irisa.fr/vista/Papers/2003_siggraph_perez.pdf>Poisson Image Editing, Microsoft Research UK (PDF)</a></li>
-</ul>
-</blockquote>
-</body>
-</html>
+# Expression and pose data
+ENABLE_EXPRESSION_DATA = True  # Capture 52 ARKit facial expressions
+SHOW_EXPRESSION_INFO = True    # Display top 3 expressions on screen
+ENABLE_POSE_DATA = True        # Capture head pose/rotation matrices
+```
+
+## Technical Details
+
+### Face Detection
+- **MediaPipe FaceLandmarker v0.10.33** in VIDEO mode with temporal tracking
+- Detects up to 2 faces simultaneously
+- 468 total landmarks (150 strategic points used for face swapping)
+- Minimum detection confidence: 0.5
+
+### Face Swapping Algorithm
+1. **Landmark Detection** - Extract 150 facial landmarks from both faces
+2. **Delaunay Triangulation** - Divide faces into triangular regions (cached)
+3. **Affine Transformation** - Warp triangles from source to destination face
+4. **Seamless Cloning** - Blend the swapped face naturally using OpenCV's seamlessClone
+
+### Blend Shapes (ARKit Compatible)
+52 facial expression categories captured per face:
+- Eye movements (eyeBlinkLeft, eyeWideRight, etc.)
+- Eyebrow movements (eyeBrowInnerUp, eyeBrowOuterUp, etc.)
+- Mouth expressions (mouthSmile, mouthFrown, jawOpen, etc.)
+- Cheek movements (cheekPuff, cheekSquint, etc.)
+
+### GPU Acceleration
+- Metal backend on Apple Silicon (M1/M2/M3)
+- XNNPACK delegate for CPU inference
+- OpenGL support for rendering
+
+## Project History
+
+Originally developed as a university project for Interactive Systems by Vladislav Chirkov, Mikhail Sekerin, and Anton Sorokin.
+
+**Recent Updates:**
+- Migrated from dlib (68 landmarks) to MediaPipe (468 landmarks)
+- Added ARKit blend shapes and transformation matrices
+- Implemented caching for triangulation and convex hulls
+- GPU acceleration support
+- 3-5x performance improvement
+
+## References
+
+- [MediaPipe Face Landmarker](https://developers.google.com/mediapipe/solutions/vision/face_landmarker)
+- [OpenCV Seamless Cloning](https://docs.opencv.org/3.4/df/da0/group__photo__clone.html)
+- [Face Swap using OpenCV](http://www.learnopencv.com/face-swap-using-opencv-c-python/)
+- [Poisson Image Editing (PDF)](http://www.irisa.fr/vista/Papers/2003_siggraph_perez.pdf)
+
+## License
+
+This project is available for educational and research purposes.

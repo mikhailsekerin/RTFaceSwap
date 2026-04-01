@@ -44,7 +44,9 @@ options = FaceLandmarkerOptions(
     num_faces=2,
     min_face_detection_confidence=0.5,
     min_face_presence_confidence=0.5,
-    min_tracking_confidence=0.5
+    min_tracking_confidence=0.5,
+    output_face_blendshapes=True,  # Enable 52 ARKit-compatible facial expressions
+    output_facial_transformation_matrixes=True  # Enable head pose/rotation data
 )
 face_landmarker = FaceLandmarker.create_from_options(options)
 
@@ -52,6 +54,11 @@ face_landmarker = FaceLandmarker.create_from_options(options)
 FACE_DETECT_INTERVAL = 1      # Detect every frame (MediaPipe is fast enough)
 PROCESS_SCALE = 1.0            # Full resolution (no need to downscale)
 ENABLE_FPS_COUNTER = True      # Show FPS on screen
+
+# Advanced features (blend shapes and transformation matrices)
+ENABLE_EXPRESSION_DATA = True  # Capture 52 ARKit facial expression parameters
+SHOW_EXPRESSION_INFO = True    # Display top expressions in debug mode
+ENABLE_POSE_DATA = True        # Capture head pose/rotation matrices
 
 # MediaPipe landmark indices for face swapping (~150 key points)
 MEDIAPIPE_FACE_SWAP_INDICES = [
@@ -105,7 +112,7 @@ class FaceSwapCache:
         return self.triangulation_cache[key]
 
 def get_all_landmarks(im, timestamp_ms):
-    """Detect faces using MediaPipe and return landmarks subset"""
+    """Detect faces using MediaPipe and return landmarks, blend shapes, and pose data"""
     # Convert BGR to RGB for MediaPipe
     rgb_frame = cv2.cvtColor(im, cv2.COLOR_BGR2RGB)
     mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb_frame)
@@ -114,9 +121,12 @@ def get_all_landmarks(im, timestamp_ms):
     detection_result = face_landmarker.detect_for_video(mp_image, timestamp_ms)
 
     all_landmarks = []
+    all_blendshapes = []
+    all_transforms = []
+
     if detection_result.face_landmarks:
         h, w = im.shape[:2]
-        for face_landmarks in detection_result.face_landmarks:
+        for i, face_landmarks in enumerate(detection_result.face_landmarks):
             # Extract subset of landmarks and convert to pixels
             points = []
             for idx in MEDIAPIPE_FACE_SWAP_INDICES:
@@ -129,7 +139,20 @@ def get_all_landmarks(im, timestamp_ms):
             if len(points) > 0:
                 all_landmarks.append(points)
 
-    return all_landmarks
+                # Collect blend shapes if enabled (52 ARKit expressions)
+                if ENABLE_EXPRESSION_DATA and detection_result.face_blendshapes:
+                    if i < len(detection_result.face_blendshapes):
+                        blendshapes = {}
+                        for blendshape in detection_result.face_blendshapes[i]:
+                            blendshapes[blendshape.category_name] = blendshape.score
+                        all_blendshapes.append(blendshapes)
+
+                # Collect transformation matrices if enabled (4x4 pose matrix)
+                if ENABLE_POSE_DATA and detection_result.facial_transformation_matrixes:
+                    if i < len(detection_result.facial_transformation_matrixes):
+                        all_transforms.append(detection_result.facial_transformation_matrixes[i])
+
+    return all_landmarks, all_blendshapes, all_transforms
 
 
 def readPoints(path):
@@ -333,8 +356,10 @@ fps = 0
 cache = FaceSwapCache()
 timestamp_ms = 0
 
-# Cached landmarks for frame skipping
+# Cached detection data for frame skipping
 cached_landmarks = []  # List of all detected face landmarks
+cached_blendshapes = []  # List of blend shape dictionaries (52 ARKit expressions)
+cached_transforms = []  # List of 4x4 transformation matrices (head pose/rotation)
 
 print("Camera ready! Press 1 to enable face swap, 2 for normal view, q to quit")
 print(f"Performance settings: MediaPipe, Detect interval={FACE_DETECT_INTERVAL}")
@@ -379,7 +404,7 @@ while(True):
 
         # Detect all faces in the full frame every N frames
         if frame_count % FACE_DETECT_INTERVAL == 0:
-            cached_landmarks = get_all_landmarks(frame, timestamp_ms)
+            cached_landmarks, cached_blendshapes, cached_transforms = get_all_landmarks(frame, timestamp_ms)
 
         # Increment timestamp for MediaPipe VIDEO mode
         timestamp_ms += int(1000 / 30)  # Increment by ~33ms per frame (30 FPS)
@@ -403,6 +428,20 @@ while(True):
             if ENABLE_FPS_COUNTER:
                 cv2.putText(output, f"FPS: {fps:.1f} | 2 faces detected", (10, 30),
                            cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+
+            # Display top expressions in debug mode
+            if SHOW_EXPRESSION_INFO and len(cached_blendshapes) > 0:
+                y_offset = 60
+                for face_idx, blendshapes in enumerate(cached_blendshapes[:2]):
+                    # Get top 3 expressions
+                    top_expressions = sorted(blendshapes.items(), key=lambda x: x[1], reverse=True)[:3]
+                    cv2.putText(output, f"Face {face_idx + 1}:", (10, y_offset),
+                               cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 0), 1)
+                    y_offset += 20
+                    for exp_name, score in top_expressions:
+                        cv2.putText(output, f"  {exp_name}: {score:.2f}", (10, y_offset),
+                                   cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 0), 1)
+                        y_offset += 18
 
             cv2.imshow("Face Swapped", output)
         else:
