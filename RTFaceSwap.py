@@ -23,7 +23,7 @@ def ensure_model_downloaded():
     if os.path.exists(MODEL_PATH):
         return MODEL_PATH
 
-    print("Downloading MediaPipe face_landmarker model (~5.7MB)...")
+    print("Downloading MediaPipe face_landmarker model (~3.6MB)...")
     os.makedirs("models", exist_ok=True)
 
     try:
@@ -81,7 +81,7 @@ MEDIAPIPE_FACE_SWAP_INDICES = [
 ]
 
 class FaceSwapCache:
-    """Cache for expensive computations (triangulation and convex hull)"""
+    """Cache for expensive computations (triangulation and convex hull) with FIFO eviction"""
     def __init__(self, max_size=100):
         self.triangulation_cache = {}
         self.hull_cache = {}
@@ -146,11 +146,21 @@ def get_all_landmarks(im, timestamp_ms):
                         for blendshape in detection_result.face_blendshapes[i]:
                             blendshapes[blendshape.category_name] = blendshape.score
                         all_blendshapes.append(blendshapes)
+                    else:
+                        all_blendshapes.append({})  # Empty dict for missing data
+                else:
+                    if len(all_landmarks) > len(all_blendshapes):  # Keep in sync
+                        all_blendshapes.append({})
 
                 # Collect transformation matrices if enabled (4x4 pose matrix)
                 if ENABLE_POSE_DATA and detection_result.facial_transformation_matrixes:
                     if i < len(detection_result.facial_transformation_matrixes):
                         all_transforms.append(detection_result.facial_transformation_matrixes[i])
+                    else:
+                        all_transforms.append(None)  # None for missing data
+                else:
+                    if len(all_landmarks) > len(all_transforms):  # Keep in sync
+                        all_transforms.append(None)
 
     return all_landmarks, all_blendshapes, all_transforms
 
@@ -192,7 +202,7 @@ def calculateDelaunayTriangles(rect, points):
         if rectContains(rect, p):
             try:
                 subdiv.insert((float(p[0]), float(p[1])))
-            except:
+            except cv2.error:
                 pass  # Skip invalid points
     triangleList = subdiv.getTriangleList();
     delaunayTri = []
@@ -268,8 +278,10 @@ def swap(img1, img2, points1, points2, cache=None):
         hullIndex = cv2.convexHull(np.array(points2, dtype=np.float32), returnPoints=False)
 
     for i in range(0, len(hullIndex)):
-        hull1.append(points1[int(hullIndex[i][0])])
-        hull2.append(points2[int(hullIndex[i][0])])
+        idx = int(hullIndex[i][0])
+        if idx < len(points1) and idx < len(points2):
+            hull1.append(points1[idx])
+            hull2.append(points2[idx])
 
     sizeImg2 = img2.shape
     rect = (0, 0, sizeImg2[1], sizeImg2[0])
@@ -286,6 +298,16 @@ def swap(img1, img2, points1, points2, cache=None):
     for i in range(0, len(dt)):
         t1 = []
         t2 = []
+
+        # Validate all indices first
+        valid = True
+        for j in range(0, 3):
+            if dt[i][j] >= len(hull1) or dt[i][j] >= len(hull2):
+                valid = False
+                break
+
+        if not valid:
+            continue
 
         for j in range(0, 3):
             t1.append(hull1[dt[i][j]])
@@ -315,7 +337,8 @@ def swap(img1, img2, points1, points2, cache=None):
     try:
         output = cv2.seamlessClone(np.uint8(img1Warped), img2, mask, center, cv2.NORMAL_CLONE)
         return output
-    except:
+    except cv2.error:
+        # Seamless clone failed, return original
         return img2
 
 
@@ -326,7 +349,7 @@ def find_camera():
 
     for backend in backends:
         for i in range(3):  # Try camera indices 0-2
-            cap = cv2.VideoCapture(i, backend) if backend else cv2.VideoCapture(i)
+            cap = cv2.VideoCapture(i, backend) if backend is not None else cv2.VideoCapture(i)
             if cap.isOpened():
                 ret, frame = cap.read()
                 if ret:
@@ -355,6 +378,7 @@ fps = 0
 # Initialize cache and timestamp
 cache = FaceSwapCache()
 timestamp_ms = 0
+last_frame_time = time.time()
 
 # Cached detection data for frame skipping
 cached_landmarks = []  # List of all detected face landmarks
@@ -406,8 +430,10 @@ while(True):
         if frame_count % FACE_DETECT_INTERVAL == 0:
             cached_landmarks, cached_blendshapes, cached_transforms = get_all_landmarks(frame, timestamp_ms)
 
-        # Increment timestamp for MediaPipe VIDEO mode
-        timestamp_ms += int(1000 / 30)  # Increment by ~33ms per frame (30 FPS)
+        # Increment timestamp for MediaPipe VIDEO mode using actual frame timing
+        current_time = time.time()
+        timestamp_ms += int((current_time - last_frame_time) * 1000)
+        last_frame_time = current_time
 
         # Use cached landmarks
         landmarks = cached_landmarks
